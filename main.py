@@ -12,7 +12,7 @@ from aiogram.filters import ChatMemberUpdatedFilter, IS_MEMBER, IS_NOT_MEMBER
 from aiogram import F
 
 # Установите токен вашего бота
-API_TOKEN = 'YOUR AP TOKEN HERE'
+API_TOKEN = 'YOUR TG BOT TOKEN'
 
 # Путь к файлу с данными пользователей
 current_directory = os.path.dirname(os.path.abspath(__file__))
@@ -85,12 +85,13 @@ async def unban_users_on_start():
 # Функция для удаления сообщения, если оно существует
 async def delete_message_if_exists(chat_id, message_id):
     try:
-        # Пытаемся удалить сообщение
         await bot.delete_message(chat_id, message_id)
         print(f"Сообщение с ID {message_id} удалено.")
+    except TelegramForbiddenError:
+        print(f"Боту не хватает прав для удаления сообщения с ID {message_id}.")
     except Exception as e:
-        # Логируем ошибку, но не выводим лишних сообщений
-        print(f"Ошибка при удалении сообщения с ID {message_id}: {e}")
+        print(f"Сообщение с ID {message_id} уже удалено или возникла другая ошибка: {e}")
+
 
 # Обработчик сообщений
 @dp.message(F.text)
@@ -173,12 +174,10 @@ async def new_chat_member(event: types.ChatMemberUpdated):
 async def ban_user(chat_id: int, user_id: int, question_message: types.Message):
     try:
         await bot.ban_chat_member(chat_id, user_id)
-        # # Пытаемся удалить сообщение, но добавляем обработку исключений для случаев, когда оно уже удалено
-        # try:
-        #     if question_message:
-        #         await delete_message_if_exists(chat_id, question_message.message_id)
-        # except Exception as e:
-        #     print(f"Ошибка при удалении сообщения капчи: {e}")
+
+        # Удаляем сообщение капчи
+        if question_message:
+            await delete_message_if_exists(chat_id, question_message.message_id)
 
         print(f"Пользователь {user_id} был забанен и удалён из группы.")
         await asyncio.sleep(3 * 60 * 60)  # 3 часа
@@ -187,6 +186,7 @@ async def ban_user(chat_id: int, user_id: int, question_message: types.Message):
     except Exception as e:
         print(f"Ошибка при блокировке пользователя: {e}")
 
+
 # Обработчик правильного ответа на капчу
 @dp.callback_query(F.data)
 async def process_callback(callback: types.CallbackQuery):
@@ -194,7 +194,7 @@ async def process_callback(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
 
     if user_id not in user_data:
-        await callback.answer("Пользователь не найден в системе, возможно, вы уже завершили проверку.", show_alert=True)
+        await callback.answer("Это не ваша капча! И не вам ее проходить!", show_alert=True)
         return
 
     if user_data[user_id]["status"] == "blocked":
@@ -208,8 +208,7 @@ async def process_callback(callback: types.CallbackQuery):
 
     if callback.data != user_data[user_id]["correct_answer"]:
         await callback.answer("Неправильно! Вы были заблокированы на 3 часа.")
-        await bot.delete_message(chat_id, callback.message.message_id)
-        await ban_user(chat_id, user_id, callback.message)
+        await ban_user(chat_id, user_id, callback.message)  # Передаем сообщение капчи в `ban_user`
         user_data[user_id]["status"] = "blocked"
         save_user_data(user_data)
 
@@ -220,15 +219,13 @@ async def process_callback(callback: types.CallbackQuery):
         user_data[user_id]["status"] = "approved"
         await callback.answer("Правильный ответ! Добро пожаловать.")
 
-        # Пытаемся удалить сообщение, но добавляем обработку исключений для случаев, когда оно уже удалено
-        try:
-            await delete_message_if_exists(chat_id, user_data[user_id]["question_message_id"])
-        except Exception as e:
-            print(f"Ошибка при удалении сообщения: {e}")
+        # Удаляем сообщение капчи после успешного ответа
+        await delete_message_if_exists(chat_id, user_data[user_id]["question_message_id"])
 
         # Удаляем пользователя из данных только после выполнения всех действий
         del user_data[user_id]
         save_user_data(user_data)
+
 
 # Функция для получения случайного факта из файла
 def get_random_fact_from_file(file_name):
